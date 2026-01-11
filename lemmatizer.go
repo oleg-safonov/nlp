@@ -2,7 +2,6 @@ package nlp
 
 import (
 	"archive/zip"
-	"bytes"
 	_ "embed"
 	"encoding/gob"
 	"fmt"
@@ -10,9 +9,6 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 )
-
-//go:embed data.zip
-var dataBytes []byte
 
 type LinkType uint8
 
@@ -50,7 +46,7 @@ type StatisticalTagger struct {
 	TagTotalCounts   map[FEATS]int
 	UniqueWords      int
 	UniqueTags       int
-	Alpha            float64 // Коэффициент сглаживания
+	Alpha            float64
 }
 
 type DictionaryBase struct {
@@ -80,46 +76,18 @@ type SuffixPredictorBase struct {
 	Data map[string][]LemmaRule
 }
 
-type Lemmatizer struct {
-	dictionary      DictionaryBase
-	suffixPredictor SuffixPredictorBase
+type LemmatizerData struct {
+	Dictionary      DictionaryBase
+	SuffixPredictor SuffixPredictorBase
 }
 
-func NewLemmatizer() (*Lemmatizer, error) {
-	l := Lemmatizer{}
+type Lemmatizer struct {
+	base LemmatizerData
+}
 
-	dataReader := bytes.NewReader(dataBytes)
-	r, err := zip.NewReader(dataReader, int64(len(dataBytes)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create zip reader: %w", err)
-	}
-
-	for _, f := range r.File {
-		if f.Name == "dictionary.bin" {
-			dictionary, err := loadFile[DictionaryBase](f)
-			if err != nil {
-				return nil, err
-			}
-			l.dictionary = *dictionary
-		}
-		if f.Name == "suffix.bin" {
-			predictor, err := loadFile[SuffixPredictorBase](f)
-			if err != nil {
-				return nil, err
-			}
-			l.suffixPredictor = *predictor
-		}
-	}
-
-	l.dictionary.importantLinks = map[LinkType]bool{}
-	for _, typeText := range []string{"ADJF-ADJS", "ADJF-COMP", "INFN-VERB", "INFN-PRTF", "INFN-GRND", "PRTF-PRTS",
-		"ADJF-SUPR_ejsh", "ADJF-SUPR_ajsh", "ADJF-SUPR_suppl", "ADJF-SUPR_nai", "ADJF-SUPR_slng", "NORM-ORPHOVAR",
-		"SBST_MASC-SBST_FEMN", "SBST_MASC-SBST_PLUR", "ADVB-COMP"} {
-		if id, ok := l.dictionary.LinkTypes[typeText]; ok {
-			l.dictionary.importantLinks[id] = true
-		} else {
-			panic(fmt.Errorf("not found link type %s", typeText))
-		}
+func NewLemmatizer(data LemmatizerData) (*Lemmatizer, error) {
+	l := Lemmatizer{
+		base: data,
 	}
 
 	return &l, nil
@@ -148,7 +116,7 @@ type Word struct {
 }
 
 func (l *Lemmatizer) GetLogScore(prevTag, currentTag FEATS, currentWord string) float64 {
-	tagger := l.dictionary.Tagger
+	tagger := l.base.Dictionary.Tagger
 	tagger.Alpha = 2
 	transCount := tagger.TransitionCounts[prevTag][currentTag]
 	transDenom := tagger.TagTotalCounts[prevTag] + int(tagger.Alpha*float64(tagger.UniqueTags))
@@ -185,11 +153,12 @@ func (l *Lemmatizer) Viterbi(sentence []Word) []Form {
 		dp[i] = make(map[Form]ViterbiStep)
 	}
 
+	dict := l.base.Dictionary
 	firstWord := sentence[0]
 	for _, form := range firstWord.Options {
 		score := l.GetLogScore(FEATS(math.MaxInt32), form.FEATS, firstWord.Text)
 		dp[0][form] = ViterbiStep{LogProb: score, BackPtr: Form{FEATS: FEATS(math.MaxInt32)},
-			Text: l.dictionary.Texts[l.dictionary.Lemmas[form.LemmaIdx].TextStart : l.dictionary.Lemmas[form.LemmaIdx].TextStart+uint32(l.dictionary.Lemmas[form.LemmaIdx].TextLen)]}
+			Text: dict.Texts[dict.Lemmas[form.LemmaIdx].TextStart : dict.Lemmas[form.LemmaIdx].TextStart+uint32(dict.Lemmas[form.LemmaIdx].TextLen)]}
 	}
 
 	for i := 1; i < n; i++ {
@@ -214,7 +183,7 @@ func (l *Lemmatizer) Viterbi(sentence []Word) []Form {
 				}
 			}
 			dp[i][currForm] = ViterbiStep{LogProb: bestLogProb, BackPtr: bestPrevForm,
-				Text: l.dictionary.Texts[l.dictionary.Lemmas[currForm.LemmaIdx].TextStart : l.dictionary.Lemmas[currForm.LemmaIdx].TextStart+uint32(l.dictionary.Lemmas[currForm.LemmaIdx].TextLen)]}
+				Text: dict.Texts[dict.Lemmas[currForm.LemmaIdx].TextStart : dict.Lemmas[currForm.LemmaIdx].TextStart+uint32(dict.Lemmas[currForm.LemmaIdx].TextLen)]}
 		}
 	}
 
@@ -288,7 +257,7 @@ func (l *Lemmatizer) LemmatizeTokens(tokens []Token) []string {
 				maxSuffLen := min(10, wordLen-1)
 				for i := maxSuffLen; i >= 4; i-- {
 					suffix := string(runes[wordLen-i:])
-					if rules, ok := l.suffixPredictor.Data[suffix]; ok {
+					if rules, ok := l.base.SuffixPredictor.Data[suffix]; ok {
 
 						for _, rule := range rules {
 							cutPos := wordLen - int(rule.Cut)
@@ -304,9 +273,9 @@ func (l *Lemmatizer) LemmatizeTokens(tokens []Token) []string {
 
 				continue
 			}
-			lemma := l.dictionary.Lemmas[form.LemmaIdx]
+			lemma := l.base.Dictionary.Lemmas[form.LemmaIdx]
 			lemma, _ = l.followLinks(lemma)
-			text := l.dictionary.Texts[lemma.TextStart : lemma.TextStart+uint32(lemma.TextLen)]
+			text := l.base.Dictionary.Texts[lemma.TextStart : lemma.TextStart+uint32(lemma.TextLen)]
 			results[w.TokenID] = text
 		}
 
@@ -326,7 +295,7 @@ func (l *Lemmatizer) LemmatizeString(word string) string {
 	maxSuffLen := min(10, wordLen-1)
 	for i := maxSuffLen; i >= 4; i-- {
 		suffix := string(runes[wordLen-i:])
-		if rules, ok := l.suffixPredictor.Data[suffix]; ok {
+		if rules, ok := l.base.SuffixPredictor.Data[suffix]; ok {
 
 			for _, rule := range rules {
 				cutPos := wordLen - int(rule.Cut)
@@ -363,7 +332,7 @@ func (l *Lemmatizer) lemmatizeByDict(word string) (string, POS, uint16, bool) {
 	maxForm := Form{}
 	resLemma := Lemma{}
 	for _, f := range forms {
-		lemma := l.dictionary.Lemmas[f.LemmaIdx]
+		lemma := l.base.Dictionary.Lemmas[f.LemmaIdx]
 		fromLemma, lemmaScore := l.followLinks(lemma)
 		score := 50*int(f.CountDocs) + int(f.CountTotal) + int(lemmaScore)
 		if score > maxScore {
@@ -375,7 +344,7 @@ func (l *Lemmatizer) lemmatizeByDict(word string) (string, POS, uint16, bool) {
 	}
 
 	if maxScore > 0 {
-		return l.dictionary.Texts[int(resLemma.TextStart) : int(resLemma.TextStart)+int(resLemma.TextLen)], maxForm.FEATS.POS(), 0, true
+		return l.base.Dictionary.Texts[int(resLemma.TextStart) : int(resLemma.TextStart)+int(resLemma.TextLen)], maxForm.FEATS.POS(), 0, true
 	}
 
 	return word, POS(math.MaxUint8), 0, false
@@ -386,11 +355,11 @@ func (l *Lemmatizer) getForms(text string) []Form {
 	digest.WriteString(text)
 	hash := digest.Sum64()
 
-	if idx, ok := l.dictionary.FormTextIndex[hash]; ok {
-		formText := l.dictionary.FormTexts[idx]
+	if idx, ok := l.base.Dictionary.FormTextIndex[hash]; ok {
+		formText := l.base.Dictionary.FormTexts[idx]
 		forms := make([]Form, 0, formText.FormLen)
 		for i := range formText.FormLen {
-			form := l.dictionary.Forms[formText.FormIdx+uint32(i)]
+			form := l.base.Dictionary.Forms[formText.FormIdx+uint32(i)]
 			forms = append(forms, form)
 		}
 
@@ -405,12 +374,12 @@ func (l *Lemmatizer) followLinks(lemma Lemma) (Lemma, int) {
 	var maxLemma Lemma
 	maxScore := -2_000_000_000
 	for i := range lemma.LinkLen {
-		link := l.dictionary.Links[int(lemma.LinkIdx)+int(i)]
-		if _, ok := l.dictionary.importantLinks[link.Type]; !ok {
+		link := l.base.Dictionary.Links[int(lemma.LinkIdx)+int(i)]
+		if _, ok := l.base.Dictionary.importantLinks[link.Type]; !ok {
 			continue
 		}
 
-		fromLemma, score := l.followLinks(l.dictionary.Lemmas[link.FromLemmaIdx])
+		fromLemma, score := l.followLinks(l.base.Dictionary.Lemmas[link.FromLemmaIdx])
 		if score > maxScore {
 			maxScore = score
 			maxLemma = fromLemma

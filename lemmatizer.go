@@ -1,9 +1,7 @@
 package nlp
 
 import (
-	"archive/zip"
 	_ "embed"
-	"encoding/gob"
 	"fmt"
 	"math"
 
@@ -90,22 +88,17 @@ func NewLemmatizer(data LemmatizerData) (*Lemmatizer, error) {
 		base: data,
 	}
 
+	l.base.Dictionary.importantLinks = map[LinkType]bool{}
+	for _, typeText := range []string{"ADJF-ADJS", "ADJF-COMP", "INFN-VERB", "INFN-PRTF", "INFN-GRND", "PRTF-PRTS",
+		"ADJF-SUPR_ejsh", "ADJF-SUPR_ajsh", "ADJF-SUPR_suppl", "ADJF-SUPR_nai", "ADJF-SUPR_slng", "NORM-ORPHOVAR",
+		"SBST_MASC-SBST_FEMN", "SBST_MASC-SBST_PLUR", "ADVB-COMP"} {
+		if id, ok := l.base.Dictionary.LinkTypes[typeText]; ok {
+			l.base.Dictionary.importantLinks[id] = true
+		} else {
+			panic(fmt.Errorf("not found link type %s", typeText))
+		}
+	}
 	return &l, nil
-}
-
-func loadFile[T any](f *zip.File) (*T, error) {
-	file, err := f.Open()
-	if err != nil {
-		return nil, fmt.Errorf("failed to open %s: %w", f.Name, err)
-	}
-
-	var base T
-	decoder := gob.NewDecoder(file)
-	err = decoder.Decode(&base)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode %s: %w", f.Name, err)
-	}
-	return &base, nil
 }
 
 type Word struct {

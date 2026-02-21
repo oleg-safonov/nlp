@@ -14,6 +14,14 @@ func Normalize(word string) string {
 
 	word = strings.ReplaceAll(word, "ё", "е")
 
+	if norm.NFC.IsNormalString(word) {
+		return word
+	}
+
+	if !needsTransformation(word) {
+		return word
+	}
+
 	removeMarksButKeepBreve := runes.Remove(runes.Predicate(func(r rune) bool {
 		return unicode.Is(unicode.Mn, r) && r != '\u0306' // й
 	}))
@@ -21,4 +29,18 @@ func Normalize(word string) string {
 	t := transform.Chain(norm.NFD, removeMarksButKeepBreve, norm.NFC)
 	result, _, _ := transform.String(t, word)
 	return result
+}
+
+func needsTransformation(s string) bool {
+	if !norm.NFC.IsNormalString(s) {
+		return true
+	}
+
+	for _, r := range s {
+		if unicode.Is(unicode.Mn, r) {
+			return true
+		}
+	}
+
+	return false
 }

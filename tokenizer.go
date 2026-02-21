@@ -66,6 +66,51 @@ func Tokenize(text string, keywords *Keywords) []Token {
 	return filterWords(tokens)
 }
 
+func CreateTokens(words []string) []Token {
+	result := make([]Token, len(words))
+	for i, w := range words {
+		punct := 0
+		num := 0
+		space := 0
+		word := 0
+
+		for _, l := range w {
+			if isPunct(l) {
+				punct++
+			}
+			if isWord(l) {
+				word++
+			}
+			if isDigit(l) {
+				num++
+			}
+			if isSpace(l) {
+				space++
+			}
+		}
+		tp := TokenOther
+		if space > 0 {
+			tp = TokenSpace
+		}
+		if punct > 0 {
+			tp = TokenPunct
+		}
+		if num > 0 {
+			tp = TokenNumber
+		}
+		if word > 0 {
+			tp = TokenWord
+		}
+
+		result[i].rawText = Normalize(w)
+		result[i].parts = result[i].partsBuf[:1]
+		result[i].parts[0] = tokenPart{start: 0, end: len(w), Type: tp}
+		result[i].tp = tp
+	}
+
+	return result
+}
+
 func split(text string, keywords *Keywords) []Token {
 	tokens := make([]Token, 32)
 	numTokens := 0

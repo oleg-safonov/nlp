@@ -91,7 +91,7 @@ func NewLemmatizer(data LemmatizerData) (*Lemmatizer, error) {
 	l.base.Dictionary.importantLinks = map[LinkType]bool{}
 	for _, typeText := range []string{"ADJF-ADJS", "ADJF-COMP", "INFN-VERB", "INFN-PRTF", "INFN-GRND", "PRTF-PRTS",
 		"ADJF-SUPR_ejsh", "ADJF-SUPR_ajsh", "ADJF-SUPR_suppl", "ADJF-SUPR_nai", "ADJF-SUPR_slng", "NORM-ORPHOVAR",
-		"SBST_MASC-SBST_FEMN", "SBST_MASC-SBST_PLUR", "ADVB-COMP"} {
+		"SBST_MASC-SBST_FEMN", "SBST_MASC-SBST_PLUR", "ADVB-COMP", "FULL-CONTRACTED"} {
 		if id, ok := l.base.Dictionary.LinkTypes[typeText]; ok {
 			l.base.Dictionary.importantLinks[id] = true
 		} else {

@@ -88,7 +88,7 @@ func NewLemmatizer(data LemmatizerData) (*Lemmatizer, error) {
 	l.base.Dictionary.importantLinks = map[LinkType]bool{}
 	for _, typeText := range []string{"ADJF-ADJS", "ADJF-COMP", "INFN-VERB", "INFN-PRTF", "INFN-GRND", "PRTF-PRTS",
 		"ADJF-SUPR_ejsh", "ADJF-SUPR_ajsh", "ADJF-SUPR_suppl", "ADJF-SUPR_nai", "ADJF-SUPR_slng", "NORM-ORPHOVAR",
-		"SBST_MASC-SBST_FEMN", "SBST_MASC-SBST_PLUR", "ADVB-COMP", "FULL-CONTRACTED"} {
+		"SBST_MASC-SBST_FEMN", "SBST_MASC-SBST_PLUR", "ADVB-COMP"} {
 		if id, ok := l.base.Dictionary.LinkTypes[typeText]; ok {
 			l.base.Dictionary.importantLinks[id] = true
 		} else {
@@ -106,24 +106,31 @@ type Word struct {
 	POS     POS
 }
 
-func (l *Lemmatizer) GetLogScore(prevTag, currentTag FEATS, currentWord string) float64 {
+func (l *Lemmatizer) GetLogScore(prevTag, currentTag FEATS, currentWord Word) float64 {
 	tagger := l.base.Dictionary.Tagger
-	tagger.Alpha = 2
+	tagger.Alpha = 0.25
 	transCount := tagger.TransitionCounts[prevTag&BigramMask][currentTag&BigramMask]
 	transDenom := tagger.TagTotalCounts[prevTag&BigramMask] + int(tagger.Alpha*float64(tagger.UniqueTags))
 	probTrans := (float64(transCount) + tagger.Alpha) / float64(transDenom)
 
 	wordCount := 0
-	for _, f := range l.getForms(currentWord) {
+	for _, f := range currentWord.Options {
 		if f.FEATS&BigramMask == currentTag&BigramMask {
 			wordCount += int(f.CountTotal)
+		}
+	}
+
+	coeff := 1.0
+	if prevTag.POS() == VERB && currentTag.POS() == NOUN {
+		if currentTag.Case() == Par || currentTag.Case() == Acc {
+			coeff = 0.85
 		}
 	}
 
 	wordDenom := tagger.TagTotalCounts[currentTag&BigramMask] + int(tagger.Alpha*float64(tagger.UniqueWords))
 	probEmission := (float64(wordCount) + tagger.Alpha) / float64(wordDenom)
 
-	return math.Log(probTrans) + math.Log(probEmission)
+	return math.Log(probTrans)*coeff + math.Log(probEmission)
 }
 
 type ViterbiStep struct {
@@ -147,7 +154,7 @@ func (l *Lemmatizer) Viterbi(sentence []Word) []Form {
 	dict := l.base.Dictionary
 	firstWord := sentence[0]
 	for _, form := range firstWord.Options {
-		score := l.GetLogScore(FEATS(math.MaxInt32), form.FEATS, firstWord.Text)
+		score := l.GetLogScore(FEATS(math.MaxInt32), form.FEATS, firstWord)
 		dp[0][form] = ViterbiStep{LogProb: score, BackPtr: Form{FEATS: FEATS(math.MaxInt32)},
 			Text: dict.Texts[dict.Lemmas[form.LemmaIdx].TextStart : dict.Lemmas[form.LemmaIdx].TextStart+uint32(dict.Lemmas[form.LemmaIdx].TextLen)]}
 	}
@@ -166,7 +173,7 @@ func (l *Lemmatizer) Viterbi(sentence []Word) []Form {
 					continue
 				}
 
-				score := prevStep.LogProb + l.GetLogScore(prevForm.FEATS, currForm.FEATS, currWord.Text)
+				score := prevStep.LogProb + l.GetLogScore(prevForm.FEATS, currForm.FEATS, currWord)
 
 				if score > bestLogProb {
 					bestLogProb = score

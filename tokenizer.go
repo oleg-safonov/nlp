@@ -99,9 +99,10 @@ func CreateTokens(words []string) []Token {
 			tp = TokenWord
 		}
 
-		result[i].rawText = Normalize(w)
+		normw := Normalize(w)
+		result[i].rawText = normw
 		result[i].parts = result[i].partsBuf[:1]
-		result[i].parts[0] = tokenPart{start: 0, end: len(w), Type: tp}
+		result[i].parts[0] = tokenPart{start: 0, end: len(normw), Type: tp}
 		result[i].tp = tp
 	}
 

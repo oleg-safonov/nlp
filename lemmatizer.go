@@ -70,10 +70,6 @@ type LemmaRule struct {
 	POS    string
 }
 
-type SuffixPredictorBase struct {
-	Data map[string][]LemmaRule
-}
-
 type LemmatizerData struct {
 	Dictionary      DictionaryBase
 	SuffixPredictor SuffixPredictorBase
@@ -98,6 +94,7 @@ func NewLemmatizer(data LemmatizerData) (*Lemmatizer, error) {
 			panic(fmt.Errorf("not found link type %s", typeText))
 		}
 	}
+
 	return &l, nil
 }
 
@@ -111,18 +108,18 @@ type Word struct {
 func (l *Lemmatizer) GetLogScore(prevTag, currentTag FEATS, currentWord string) float64 {
 	tagger := l.base.Dictionary.Tagger
 	tagger.Alpha = 2
-	transCount := tagger.TransitionCounts[prevTag][currentTag]
-	transDenom := tagger.TagTotalCounts[prevTag] + int(tagger.Alpha*float64(tagger.UniqueTags))
+	transCount := tagger.TransitionCounts[prevTag&BigramMask][currentTag&BigramMask]
+	transDenom := tagger.TagTotalCounts[prevTag&BigramMask] + int(tagger.Alpha*float64(tagger.UniqueTags))
 	probTrans := (float64(transCount) + tagger.Alpha) / float64(transDenom)
 
 	wordCount := 0
 	for _, f := range l.getForms(currentWord) {
-		if f.FEATS == currentTag {
+		if f.FEATS&BigramMask == currentTag&BigramMask {
 			wordCount += int(f.CountTotal)
 		}
 	}
 
-	wordDenom := tagger.TagTotalCounts[currentTag] + int(tagger.Alpha*float64(tagger.UniqueWords))
+	wordDenom := tagger.TagTotalCounts[currentTag&BigramMask] + int(tagger.Alpha*float64(tagger.UniqueWords))
 	probEmission := (float64(wordCount) + tagger.Alpha) / float64(wordDenom)
 
 	return math.Log(probTrans) + math.Log(probEmission)
@@ -210,10 +207,21 @@ func (l *Lemmatizer) Disambiguate(tokens []Token) []Word {
 
 			forms := l.getForms(Normalize(token.Text()))
 			if len(forms) == 0 {
-				forms = append(forms, Form{FEATS: FEATS(0).SetPOS(NOUN)},
-					Form{FEATS: FEATS(0).SetPOS(VERB)},
-					Form{FEATS: FEATS(0).SetPOS(ADJ)},
-					Form{FEATS: FEATS(0).SetPOS(ADV)})
+				predictions := l.base.SuffixPredictor.Predict(Normalize(token.Text()))
+				if len(predictions) > 0 {
+					matchlen := predictions[0].MatchLen
+					for _, pred := range predictions {
+						if pred.MatchLen < matchlen-1 {
+							break
+						}
+						forms = append(forms, Form{FEATS: pred.Tag & BigramMask, CountTotal: uint16(pred.RuleCounter)})
+					}
+				} else {
+					forms = append(forms, Form{FEATS: FEATS(0).SetPOS(NOUN)},
+						Form{FEATS: FEATS(0).SetPOS(VERB)},
+						Form{FEATS: FEATS(0).SetPOS(ADJ)},
+						Form{FEATS: FEATS(0).SetPOS(ADV)})
+				}
 			}
 			words = append(words, Word{
 				Text:    Normalize(token.Text()),
@@ -244,26 +252,10 @@ func (l *Lemmatizer) LemmatizeTokens(tokens []Token) []string {
 		if len(w.Options) > 0 {
 			form := w.Options[0]
 			if form.LemmaIdx == 0 {
-
-				runes := []rune(w.Text)
-				wordLen := len(runes)
-				maxSuffLen := min(10, wordLen-1)
-				for i := maxSuffLen; i >= 4; i-- {
-					suffix := string(runes[wordLen-i:])
-					if rules, ok := l.base.SuffixPredictor.Data[suffix]; ok {
-
-						for _, rule := range rules {
-							cutPos := wordLen - int(rule.Cut)
-							if cutPos < 0 {
-								cutPos = 0
-							}
-
-							lemma := string(runes[:cutPos]) + rule.Append
-							results[w.TokenID] = lemma
-						}
-					}
+				predictions := l.base.SuffixPredictor.Predict(w.Text)
+				if len(predictions) > 0 {
+					results[w.TokenID] = predictions[0].Lemma
 				}
-
 				continue
 			}
 			lemma := l.base.Dictionary.Lemmas[form.LemmaIdx]
@@ -283,37 +275,12 @@ func (l *Lemmatizer) LemmatizeString(word string) string {
 		return res
 	}
 
-	runes := []rune(word)
-	wordLen := len(runes)
-	maxSuffLen := min(10, wordLen-1)
-	for i := maxSuffLen; i >= 4; i-- {
-		suffix := string(runes[wordLen-i:])
-		if rules, ok := l.base.SuffixPredictor.Data[suffix]; ok {
-
-			for _, rule := range rules {
-				cutPos := wordLen - int(rule.Cut)
-				if cutPos < 0 {
-					cutPos = 0
-				}
-
-				lemma := string(runes[:cutPos]) + rule.Append
-				return lemma
-			}
-		}
+	predictions := l.base.SuffixPredictor.Predict(word)
+	if len(predictions) > 0 {
+		return predictions[0].Lemma
 	}
 
 	return word
-}
-
-type prediction struct {
-	LemmaIdx uint32
-
-	FormCount      uint16
-	LemmaCount     uint16
-	FormDocsCount  uint16
-	LemmadocsCount uint16
-
-	score int // TODO
 }
 
 func (l *Lemmatizer) lemmatizeByDict(word string) (string, POS, uint16, bool) {

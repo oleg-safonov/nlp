@@ -1,7 +1,6 @@
 package nlp
 
 import (
-	_ "embed"
 	"fmt"
 	"math"
 
@@ -76,12 +75,14 @@ type LemmatizerData struct {
 }
 
 type Lemmatizer struct {
-	base LemmatizerData
+	base     LemmatizerData
+	keywords *Keywords
 }
 
 func NewLemmatizer(data LemmatizerData) (*Lemmatizer, error) {
 	l := Lemmatizer{
-		base: data,
+		base:     data,
+		keywords: NewKeywords(DefaultKeywords),
 	}
 
 	l.base.Dictionary.importantLinks = map[LinkType]bool{}
@@ -205,9 +206,9 @@ func (l *Lemmatizer) Disambiguate(tokens []Token) []Word {
 			token.Type() == TokenWord ||
 			token.Type() == TokenKeyword {
 
-			forms := l.getForms(Normalize(token.Text()))
+			forms := l.getForms(token.Text())
 			if len(forms) == 0 {
-				predictions := l.base.SuffixPredictor.Predict(Normalize(token.Text()))
+				predictions := l.base.SuffixPredictor.Predict(token.Text())
 				if len(predictions) > 0 {
 					matchlen := predictions[0].MatchLen
 					for _, pred := range predictions {
@@ -224,7 +225,7 @@ func (l *Lemmatizer) Disambiguate(tokens []Token) []Word {
 				}
 			}
 			words = append(words, Word{
-				Text:    Normalize(token.Text()),
+				Text:    token.Text(),
 				TokenID: i,
 				Options: forms,
 			})
@@ -244,7 +245,7 @@ func (l *Lemmatizer) LemmatizeTokens(tokens []Token) []string {
 	results := make([]string, 0, len(tokens))
 
 	for _, t := range tokens {
-		results = append(results, Normalize(t.Text()))
+		results = append(results, t.Text())
 	}
 
 	words := l.Disambiguate(tokens)
@@ -268,7 +269,12 @@ func (l *Lemmatizer) LemmatizeTokens(tokens []Token) []string {
 	return results
 }
 
-func (l *Lemmatizer) LemmatizeString(word string) string {
+func (l *Lemmatizer) LemmatizeText(text string) []string {
+	tokens := Tokenize(text, l.keywords)
+	return l.LemmatizeTokens(tokens)
+}
+
+func (l *Lemmatizer) LemmatizeWord(word string) string {
 	word = Normalize(word)
 
 	if res, _, _, ok := l.lemmatizeByDict(word); ok {
@@ -284,8 +290,6 @@ func (l *Lemmatizer) LemmatizeString(word string) string {
 }
 
 func (l *Lemmatizer) lemmatizeByDict(word string) (string, POS, uint16, bool) {
-	word = Normalize(word)
-
 	forms := l.getForms(word)
 
 	maxScore := -2_000_000_000

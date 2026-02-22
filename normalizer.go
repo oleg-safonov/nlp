@@ -14,10 +14,6 @@ func Normalize(word string) string {
 
 	word = strings.ReplaceAll(word, "ё", "е")
 
-	if norm.NFC.IsNormalString(word) {
-		return word
-	}
-
 	if !needsTransformation(word) {
 		return word
 	}

@@ -1,11 +1,8 @@
 package nlp
 
 import (
-	"html"
 	"unicode"
 	"unicode/utf8"
-
-	"golang.org/x/text/unicode/norm"
 )
 
 type TokenType int
@@ -58,7 +55,7 @@ func (t *Token) Type() TokenType {
 }
 
 func Tokenize(text string, keywords *Keywords) []Token {
-	tokens := split(norm.NFC.String(html.UnescapeString(text)), keywords)
+	tokens := split(Normalize(text), keywords)
 
 	tokens = mergeNumbers(tokens)
 	tokens = mergeHyphenatedWords(tokens)
